@@ -4,7 +4,6 @@ Python reimplementation.
 """
 import logging
 import time
-from collections import Counter
 from enum import IntEnum
 
 import numpy as np
@@ -62,6 +61,7 @@ class CdlLdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         self.beta = beta
         self.gamma_c = gamma_c
         self.gamma_s = gamma_s
+        self.gamma = np.array([gamma_c, gamma_s])
         self.eta = eta
         np.random.seed(seed)
 
@@ -82,9 +82,9 @@ class CdlLdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         # 文档单词数，D
         self.n_word_by_doc = np.zeros(D, dtype=np.int)
         # 每个文档中每个单词的出现次数，D*V
-        self.count_word_by_doc = [Counter() for d in range(D)]
+        self.count_word_by_doc = np.zeros((D, V), dtype=np.int)
         # 每个文档中每个标签的出现次数，D*L
-        self.count_label_by_doc = [Counter() for d in range(D)]
+        self.count_label_by_doc = np.zeros((D, L), dtype=np.int)
         # 每个文档、标签、主题类型对应的单词数，D*L*R
         self.n_word_by_doc_label_type = np.zeros((D, L, R), dtype=np.int)
         # 每个文档、标签、公共主题对应的单词数，D*L*TC
@@ -92,13 +92,9 @@ class CdlLdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         # 每个文档、标签、特有主题对应的单词数，D*L*TS
         self.n_word_by_doc_label_topic_s = np.zeros((D, L, self.n_topics_s), dtype=np.int)
         # 每个标签、公共主题下每个单词的出现次数，L*TC*V
-        self.count_word_by_label_topic_c = [
-            [Counter() for c in range(self.n_topics_c)] for l in range(L)
-        ]
+        self.count_word_by_label_topic_c = np.zeros((L, self.n_topics_c, V), dtype=np.int)
         # 每个域、标签、特有主题下每个单词的出现次数，M*L*TS*V
-        self.count_word_by_domain_label_topic_s = [
-            [[Counter() for s in range(self.n_topics_s)] for l in range(L)] for m in range(M)
-        ]
+        self.count_word_by_domain_label_topic_s = np.zeros((M, L, self.n_topics_s, V), dtype=np.int)
         # 每个标签、公共主题对应的单词数，L*TC
         self.n_word_by_label_topic_c = np.zeros((L, self.n_topics_c), dtype=np.int)
         # 每个域、标签、特有主题对应的单词数，M*L*TS
@@ -147,25 +143,25 @@ class CdlLdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
             self.topic_type[d] = [0] * len(doc)
             self.topic[d] = [0] * len(doc)
             for i, w in enumerate(doc):
-                self.count_word_by_doc[d][w] += 1
+                self.count_word_by_doc[d, w] += 1
                 m = doc.domain
                 # TODO 标签l应从多项式分布pi中采样，主题类型r应从伯努利分布sigma中采样
                 # TODO 文档-主题分布theta和主题-单词分布phi应从狄利克雷分布alpha, beta中采样
                 self.label[d][i] = l = doc.label if m == Domain.SOURCE \
                     else np.random.randint(L)
-                self.count_label_by_doc[d][l] += 1
+                self.count_label_by_doc[d, l] += 1
 
                 self.topic_type[d][i] = r = np.random.choice((TopicType.COMMON, TopicType.SPECIFIC))
                 if r == TopicType.COMMON:
                     self.topic[d][i] = z = np.random.randint(self.n_topics_c)
                     self.n_word_by_doc_label_topic_c[d, l, z] += 1
-                    self.count_word_by_label_topic_c[l][z][w] += 1
+                    self.count_word_by_label_topic_c[l, z, w] += 1
                     self.n_word_by_label_topic_c[l, z] += 1
                     self.n_word_by_doc_label_type[d, l, r] += 1
                 else:
                     self.topic[d][i] = z = np.random.randint(self.n_topics_s)
                     self.n_word_by_doc_label_topic_s[d, l, z] += 1
-                    self.count_word_by_domain_label_topic_s[m][l][z][w] += 1
+                    self.count_word_by_domain_label_topic_s[m, l, z, w] += 1
                     self.n_word_by_domain_label_topic_s[m, l, z] += 1
                     self.n_word_by_doc_label_type[d, l, r] += 1
         logger.info('Initialization finished.')
@@ -211,85 +207,92 @@ class CdlLdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         #          └────────┴──────────┴────────┴──────────┘
         #          │      l = 0        |      l = 1        │
         period = self.n_topics_c + self.n_topics_s
-        p_table = np.zeros(self.corpus.n_labels * period)
-        i = 0
-        for l in range(self.corpus.n_labels):
-            # pi = P(l|d)
-            pi = self.calc_pi(d, m, l)
-            # sigma = P(r|l,d)
-            sigma_c = self.calc_sigma(d, l, TopicType.COMMON)
-            sigma_s = self.calc_sigma(d, l, TopicType.SPECIFIC)
-            # theta = P(z|r,l,d)
-            # phi = P(w|z,r,l,d)
-            for c in range(self.n_topics_c):
-                theta = self.calc_theta(d, l, TopicType.COMMON, c)
-                phi = self.calc_phi(m, l, TopicType.COMMON, c, w)
-                p_table[i] = pi * sigma_c * theta * phi
-                i += 1
-            for s in range(self.n_topics_s):
-                theta = self.calc_theta(d, l, TopicType.SPECIFIC, s)
-                phi = self.calc_phi(m, l, TopicType.SPECIFIC, s, w)
-                p_table[i] = pi * sigma_s * theta * phi
-                i += 1
-        p_table /= p_table.sum()
-
-        # 指定概率采样
-        i = np.random.choice(p_table.size, p=p_table)
-        l = i // period
-        if i < l * period + self.n_topics_c:
+        p_table = self.calc_joint_distribution(d, m, w).ravel()
+        index = np.random.choice(p_table.size, p=p_table)
+        l = index // period
+        offset = index - l * period
+        if offset < self.n_topics_c:
             r = TopicType.COMMON
-            z = i - l * period
+            z = offset
         else:
             r = TopicType.SPECIFIC
-            z = i - l * period - self.n_topics_c
+            z = offset - self.n_topics_c
         return l, r, z
 
     def update_word_count(self, d, m, l, r, z, w, delta):
         """更新属于文档d、域m、标签l、主题类型r、主题z的单词w的计数，delta = 1/-1。"""
-        self.count_label_by_doc[d][l] += delta
+        self.count_label_by_doc[d, l] += delta
         self.n_word_by_doc_label_type[d, l, r] += delta
         if r == TopicType.COMMON:
-            self.count_word_by_label_topic_c[l][z][w] += delta
+            self.count_word_by_label_topic_c[l, z, w] += delta
             self.n_word_by_label_topic_c[l, z] += delta
             self.n_word_by_doc_label_topic_c[d, l, z] += delta
         else:
-            self.count_word_by_domain_label_topic_s[m][l][z][w] += delta
+            self.count_word_by_domain_label_topic_s[m, l, z, w] += delta
             self.n_word_by_domain_label_topic_s[m, l, z] += delta
             self.n_word_by_doc_label_topic_s[d, l, z] += delta
 
-    def calc_phi(self, m, l, r, z, w):
-        """计算属于域m、标签l、类型r的主题z产生单词w的概率。"""
-        if r == TopicType.COMMON:
-            n1 = self.count_word_by_label_topic_c[l][z][w]
-            n2 = self.n_word_by_label_topic_c[l, z]
-        else:
-            n1 = self.count_word_by_domain_label_topic_s[m][l][z][w]
-            n2 = self.n_word_by_domain_label_topic_s[m, l, z]
-        return (n1 + self.beta) / (n2 + self.corpus.n_vocabs * self.beta)
+    def calc_joint_distribution(self, d, m, w):
+        """计算文档d中的单词w的标签-主题联合概率分布。
 
-    def calc_theta(self, d, l, r, z):
-        """计算文档d产生属于标签l、类型r的主题z的概率。"""
-        if r == TopicType.COMMON:
-            n1 = self.n_word_by_doc_label_topic_c[d, l, z]
-            n_topics = self.n_topics_c
-        else:
-            n1 = self.n_word_by_doc_label_topic_s[d, l, z]
-            n_topics = self.n_topics_s
-        return (n1 + self.alpha) / (self.n_word_by_doc_label_type[d, l, r] + n_topics * self.alpha)
+        :param d: 单词w所属文档编号
+        :param m: 文档d所属的域
+        :param w: 目标单词在单词表中的编号
+        :return: ndarray(L, TC + TS), 0~TC-1列表示公共主题，TC~TC+TS-1列表示特有主题
+        """
+        distribution = np.ones((self.corpus.n_labels, self.n_topics_c + self.n_topics_s))
+        distribution *= self.calc_phi(m, w)
+        distribution *= self.calc_theta(d)
+        sigma = self.calc_sigma(d)
+        distribution[:, :self.n_topics_c] *= sigma[:, TopicType.COMMON][:, np.newaxis]
+        distribution[:, self.n_topics_c:] *= sigma[:, TopicType.SPECIFIC][:, np.newaxis]
+        distribution *= self.calc_pi(d, m)[:, np.newaxis]
+        distribution /= distribution.sum()
+        return distribution
 
-    def calc_sigma(self, d, l, r):
-        """计算属于标签l的文档d产生主题类型r的概率。"""
-        gamma = self.gamma_c if r == TopicType.COMMON else self.gamma_s
-        return (self.n_word_by_doc_label_type[d, l, r] + gamma) \
-               / (self.count_label_by_doc[d][l] + self.gamma_c + self.gamma_s)
+    def calc_phi(self, m, w):
+        """计算属于域m、标签l的主题z产生单词w的概率。
 
-    def calc_pi(self, d, m, l):
-        """计算属于域m的文档d属于标签l的概率"""
+        :return: ndarray(L, TC + TS), 0~TC-1列表示公共主题，TC~TC+TS-1列表示特有主题
+        """
+        phi = np.zeros((self.corpus.n_labels, self.n_topics_c + self.n_topics_s))
+        phi[:, :self.n_topics_c] = (self.count_word_by_label_topic_c[:, :, w] + self.beta) \
+                / (self.n_word_by_label_topic_c + self.corpus.n_vocabs * self.beta)
+        phi[:, self.n_topics_c:] = (self.count_word_by_domain_label_topic_s[m, :, :, w] + self.beta) \
+                / (self.n_word_by_domain_label_topic_s[m] + self.corpus.n_vocabs * self.beta)
+        return phi
+
+    def calc_theta(self, d):
+        """计算文档d的标签-主题联合分布。
+
+        :return: ndarray(L, TC + TS), 0~TC-1列表示公共主题，TC~TC+TS-1列表示特有主题
+        """
+        theta = np.zeros((self.corpus.n_labels, self.n_topics_c + self.n_topics_s))
+        theta[:, :self.n_topics_c] = (self.n_word_by_doc_label_topic_c[d] + self.alpha) \
+                  / (self.n_word_by_doc_label_type[d, :, TopicType.COMMON][:, np.newaxis]
+                     + self.n_topics_c * self.alpha)
+        theta[:, self.n_topics_c:] = (self.n_word_by_doc_label_topic_s[d] + self.alpha) \
+                  / (self.n_word_by_doc_label_type[d, :, TopicType.SPECIFIC][:, np.newaxis]
+                     + self.n_topics_s * self.alpha)
+        return theta
+
+    def calc_sigma(self, d):
+        """计算文档d的标签-主题类型联合分布。
+
+        :return: ndarray(L, R), p[l][r]表示文档d的标签为l、主题类型为r的概率
+        """
+        return (self.n_word_by_doc_label_type[d] + self.gamma) \
+               / (self.count_label_by_doc[d][:, np.newaxis] + self.gamma.sum())
+
+    def calc_pi(self, d, m):
+        """计算属于域m的文档d的标签概率分布。
+
+        :return: ndarray(L)，第l个元素表示d属于标签l的概率
+        """
         if m == Domain.SOURCE:
-            return self.count_label_by_doc[d][l] / self.n_word_by_doc[d] \
-                if self.n_word_by_doc[d] > 0 else 1
+            return self.count_label_by_doc[d] / self.n_word_by_doc[d]
         else:
-            return (self.count_label_by_doc[d][l] + self.eta) \
+            return (self.count_label_by_doc[d] + self.eta) \
                    / (self.n_word_by_doc[d] + self.corpus.n_labels * self.eta)
 
     def do_mstep(self):
@@ -300,23 +303,24 @@ class CdlLdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         self.theta_s *= self.update_count
         self.sigma *= self.update_count
         self.pi *= self.update_count
-        for l in range(self.corpus.n_labels):
-            for c in range(self.n_topics_c):
-                for w in range(self.corpus.n_vocabs):
-                    self.phi_c[l, c, w] += self.calc_phi(None, l, TopicType.COMMON, c, w)
-            for m in (Domain.SOURCE, Domain.TARGET):
-                for s in range(self.n_topics_s):
-                    for w in range(self.corpus.n_vocabs):
-                        self.phi_s[m, l, s, w] += self.calc_phi(m, l, TopicType.SPECIFIC, s, w)
+
+        self.phi_c += (self.count_word_by_label_topic_c + self.beta) \
+                      / (self.n_word_by_label_topic_c[:, :, np.newaxis]
+                         + self.corpus.n_vocabs * self.beta)
+        self.phi_s += (self.count_word_by_domain_label_topic_s + self.beta) \
+                      / (self.n_word_by_domain_label_topic_s[:, :, :, np.newaxis]
+                         + self.corpus.n_vocabs * self.beta)
+        self.theta_c += (self.n_word_by_doc_label_topic_c + self.alpha) \
+                        / (self.n_word_by_doc_label_type[:, :, TopicType.COMMON][:, :, np.newaxis]
+                           + self.n_topics_c * self.alpha)
+        self.theta_s += (self.n_word_by_doc_label_topic_s + self.alpha) \
+                        / (self.n_word_by_doc_label_type[:, :, TopicType.SPECIFIC][:, :, np.newaxis]
+                           + self.n_topics_s * self.alpha)
+        self.sigma += (self.n_word_by_doc_label_type + self.gamma) \
+                      / (self.count_label_by_doc[:, np.newaxis] + self.gamma.sum())
         for d, doc in enumerate(self.corpus):
-            for l in range(self.corpus.n_labels):
-                for c in range(self.n_topics_c):
-                    self.theta_c[d, l, c] += self.calc_theta(d, l, TopicType.COMMON, c)
-                for s in range(self.n_topics_s):
-                    self.theta_s[d, l, s] += self.calc_theta(d, l, TopicType.SPECIFIC, s)
-                for r in (TopicType.COMMON, TopicType.SPECIFIC):
-                    self.sigma[d, l, r] += self.calc_sigma(d, l, r)
-                self.pi[d, l] += self.calc_pi(d, doc.domain, l)
+            self.pi[d] += self.calc_pi(d, doc.domain)
+
         self.update_count += 1
         self.phi_c /= self.update_count
         self.phi_s /= self.update_count
@@ -331,7 +335,7 @@ class CdlLdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         :return: ndarray(Dt), Dt为目标域文档数
         """
         return np.array([
-            self.count_label_by_doc[d].most_common(1)[0][0]
+            self.count_label_by_doc[d].argmax()
             for d, doc in enumerate(self.corpus) if doc.domain == Domain.TARGET
         ])
 
@@ -348,11 +352,13 @@ class CdlLdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         for d, doc in enumerate(self.corpus):
             if doc.domain == Domain.TARGET:
                 logp = 0.0
-                for w, count in self.count_word_by_doc[d].items():
+                for w in range(self.corpus.n_vocabs):
+                    if self.count_word_by_doc[d, w] == 0:
+                        continue
                     s = np.sum(self.theta_c[d, :, :] * self.phi_c[:, :, w]
                                + self.theta_s[d, :, :] * self.phi_s[Domain.TARGET, :, :, w])
                     if s > 0:
-                        logp += count * np.log(s)
+                        logp += self.count_word_by_doc[d, w] * np.log(s)
                 sum_logp += logp
         sum_len = sum(len(doc) for doc in self.corpus if doc.domain == Domain.TARGET)
         return np.exp(-sum_logp / sum_len)
