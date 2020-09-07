@@ -315,10 +315,11 @@ class CdlLdaModel(basemodel.BaseTopicModel):
         self.pi /= self.update_count
 
     def predict_label(self):
-        """预测目标域文档的标签，选择一篇文档中出现次数最多的单词标签作为该文档的标签。
+        """预测目标域文档的标签。
 
         :return: ndarray(Dt), Dt为目标域文档数
         """
+        # 有监督预测：选择一篇文档中出现次数最多的单词标签作为该文档的标签
         return np.array([
             self.count_label_by_doc[d].argmax()
             for d, doc in enumerate(self.corpus) if doc.domain == Domain.TARGET
