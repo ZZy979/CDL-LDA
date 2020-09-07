@@ -7,8 +7,9 @@ import time
 from enum import IntEnum
 
 import numpy as np
-from gensim import interfaces
+from gensim import matutils
 from gensim.models import basemodel
+from numba import jit
 
 import utils
 from corpora import Corpus
@@ -29,11 +30,11 @@ class TopicType(IntEnum):
 logger = logging.getLogger(__name__)
 
 
-class CdlLdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
+class CdlLdaModel(basemodel.BaseTopicModel):
     """标准CDL-LDA模型"""
     name = 'CDL-LDA'
 
-    def __init__(self, corpus: Corpus, iterations=50, update_every=10,
+    def __init__(self, corpus: Corpus, iterations=40, update_every=8,
                  n_topics_c=6, n_topics_s=6, alpha=10.0, beta=0.1,
                  gamma_c=1000.0, gamma_s=1000.0, eta=0.01, seed=45):
         """构造一个CDL-LDA模型
@@ -115,7 +116,7 @@ class CdlLdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         # 每个文档中每个单词的主题，D*Nd
         self.topic = [[] for d in range(D)]
 
-        # ----------分布参数（用于累加？）----------
+        # ----------分布参数----------
         # 公共主题-单词分布，L*TC*V
         self.phi_c = np.zeros((L, self.n_topics_c, V))
         # 特有主题-单词分布，M*L*TS*V
@@ -131,10 +132,7 @@ class CdlLdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         # 参数更新次数
         self.update_count = 0
 
-        self.init()
-
-    def init(self):
-        """根据语料库初始化单词数统计、隐变量和分布参数。"""
+        # 根据语料库初始化单词数统计、隐变量和分布参数
         # d - 文档编号
         # w - 单词在单词表中的编号
         # i - 单词在文档中的索引
@@ -150,19 +148,24 @@ class CdlLdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
             self.topic[d] = [0] * len(doc)
             for i, w in enumerate(doc):
                 self.count_word_by_doc[d, w] += 1
-                m = doc.domain
-                # TODO 标签l应从多项式分布pi中采样，主题类型r应从伯努利分布sigma中采样
-                # TODO 文档-主题分布theta和主题-单词分布phi应从狄利克雷分布alpha, beta中采样
-                self.label[d][i] = l = doc.label if m == Domain.SOURCE \
-                    else np.random.randint(self.corpus.n_labels)
-                x = np.random.random()
-                self.topic_type[d][i] = r = TopicType.COMMON if x < 0.5 else TopicType.SPECIFIC
-                if r == TopicType.COMMON:
-                    self.topic[d][i] = z = np.random.randint(self.n_topics_c)
-                else:
-                    self.topic[d][i] = z = np.random.randint(self.n_topics_s)
-                self.update_word_count(d, m, l, r, z, w, 1)
+                l, r, z = self.init_word(doc)
+                self.label[d][i], self.topic_type[d][i], self.topic[d][i] = l, r, z
+                self.update_word_count(d, doc.domain, l, r, z, w, 1)
         logger.info('Initialization finished')
+
+    def init_word(self, doc):
+        """初始化一个单词的标签、主题类型和主题。
+
+        :param doc: 单词所属的文档
+        :return: 单词的标签、主题类型和主题
+        """
+        # TODO 标签l应从多项式分布pi中采样，主题类型r应从伯努利分布sigma中采样
+        # TODO 文档-主题分布theta和主题-单词分布phi应从狄利克雷分布alpha, beta中采样
+        l = doc.label if doc.domain == Domain.SOURCE else np.random.randint(self.corpus.n_labels)
+        r = TopicType.COMMON if np.random.random() < 0.5 else TopicType.SPECIFIC
+        z = np.random.randint(self.n_topics_c) if r == TopicType.COMMON \
+            else np.random.randint(self.n_topics_s)
+        return l, r, z
 
     def train(self):
         """训练模型"""
@@ -234,25 +237,48 @@ class CdlLdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
         :param w: 目标单词在单词表中的编号
         :return: ndarray(L, TC + TS), 0~TC-1列表示公共主题，TC~TC+TS-1列表示特有主题
         """
-        return utils.calc_joint_distribution(
-            d, m, w, self.corpus.n_labels, self.corpus.n_vocabs, self.n_topics_c, self.n_topics_s,
-            self.alpha, self.beta, self.gamma, self.eta, self.n_word_by_doc,
-            self.count_label_by_doc, self.n_word_by_doc_label_type,
-            self.n_word_by_doc_label_topic_c, self.n_word_by_doc_label_topic_s,
-            self.count_word_by_label_topic_c, self.count_word_by_domain_label_topic_s,
+        return _calc_joint_distribution(
+            self.n_topics_c, self.calc_phi(m, w), self.calc_theta(d),
+            self.calc_sigma(d), self.calc_pi(d, m)[:, np.newaxis]
+        )
+
+    def calc_phi(self, m, w):
+        """计算属于域m、标签l的主题z产生单词w的概率。
+
+        :return: ndarray(L, TC + TS), 0~TC-1列表示公共主题，TC~TC+TS-1列表示特有主题
+        """
+        return _calc_phi(
+            int(m), w, self.corpus.n_labels, self.corpus.n_vocabs, self.n_topics_c, self.n_topics_s,
+            self.beta, self.count_word_by_label_topic_c, self.count_word_by_domain_label_topic_s,
             self.n_word_by_label_topic_c, self.n_word_by_domain_label_topic_s
         )
+
+    def calc_theta(self, d):
+        """计算文档d的标签-主题联合分布。
+
+        :return: ndarray(L, TC + TS), 0~TC-1列表示公共主题，TC~TC+TS-1列表示特有主题
+        """
+        return _calc_theta(
+            d, self.corpus.n_labels, self.n_topics_c, self.n_topics_s, self.alpha,
+            self.n_word_by_doc_label_type,
+            self.n_word_by_doc_label_topic_c, self.n_word_by_doc_label_topic_s
+        )
+
+    def calc_sigma(self, d):
+        """计算文档d的标签-主题类型联合分布。
+
+        :return: ndarray(L, R), p[l][r]表示文档d的标签为l、主题类型为r的概率
+        """
+        return _calc_sigma(d, self.gamma, self.count_label_by_doc, self.n_word_by_doc_label_type)
 
     def calc_pi(self, d, m):
         """计算属于域m的文档d的标签概率分布。
 
         :return: ndarray(L)，第l个元素表示d属于标签l的概率
         """
-        if m == Domain.SOURCE:
-            return self.count_label_by_doc[d] / self.n_word_by_doc[d]
-        else:
-            return (self.count_label_by_doc[d] + self.eta) \
-                   / (self.n_word_by_doc[d] + self.corpus.n_labels * self.eta)
+        return _calc_pi(
+            d, int(m), self.corpus.n_labels, self.eta, self.n_word_by_doc, self.count_label_by_doc
+        )
 
     def do_mstep(self):
         """M步：更新分布参数。"""
@@ -307,14 +333,124 @@ class CdlLdaModel(interfaces.TransformationABC, basemodel.BaseTopicModel):
             \log P(d) = \sum_{w \in d} {({N_{d,w}}\log \sum_{l \in L} {\sum_{r \in R}
              {\sum_{z \in {T^r}} {\theta _{d,l}^r(z)\phi _{Target,l,z}^r(w)}}})}
         """
-        return utils.calc_perplexity(
+        return _calc_perplexity(
             np.array([d for d, doc in enumerate(self.corpus) if doc.domain == Domain.TARGET]),
             self.count_word_by_doc, self.phi_c, self.phi_s, self.theta_c, self.theta_s
         )
 
-    def __getitem__(self, vec):
-        # TODO 预测新文档？
-        pass
+    def get_topics(self, m=Domain.SOURCE, l=0, r=TopicType.COMMON):
+        """返回主题-单词分布。
 
-    def get_topics(self):
-        pass
+        :param m: 域，仅对特有主题有效
+        :param l: 标签
+        :param r: 主题类型
+        :return: ndarray(Tr, V)
+        """
+        if r == TopicType.COMMON:
+            return self.phi_c[l] / self.phi_c[l].sum(axis=1)[:, np.newaxis]
+        else:
+            return self.phi_s[m][l] / self.phi_s[m][l].sum(axis=1)[:, np.newaxis]
+
+    def show_topic(self, topicid, topn=10, m=Domain.SOURCE, l=0, r=TopicType.COMMON):
+        """返回指定域、标签和类型的主题topicid的Top N (单词,概率)表示。
+
+        :return: list of (str, float)
+        """
+        topic = self.get_topics(m, l, r)[topicid]
+        return [(self.corpus.id2word[w], topic[w]) for w in matutils.argsort(topic, topn, True)]
+
+    def show_topics(self, num_topics=10, num_words=10, log=False,
+                    m=Domain.SOURCE, l=0, r=TopicType.COMMON):
+        """返回指定主题的Top N (单词,概率)表示。
+
+        :return: list of (int, list of (str, float))
+        """
+        n_topics = self.n_topics_c if r == TopicType.COMMON else self.n_topics_s
+        if num_topics < 0 or num_topics > n_topics:
+            num_topics = n_topics
+        topics = []
+        for z in range(num_topics):
+            topic = self.show_topic(z, num_words, m, l, r)
+            topics.append((z, topic))
+            if log:
+                logger.info('%s topic #%d: %s', r.name, z, topic)
+        return topics
+
+    def print_topic(self, topicno, topn=10, m=Domain.SOURCE, l=0, r=TopicType.COMMON):
+        return ' + '.join('%.3f*"%s"' % (v, k) for k, v in self.show_topic(topicno, topn, m, l, r))
+
+    def print_topics(self, num_topics=20, num_words=10, m=Domain.SOURCE, l=0, r=TopicType.COMMON):
+        return self.show_topics(num_topics, num_words, True, m, l, r)
+
+
+@jit(nopython=True)
+def _calc_joint_distribution(n_topics_c, phi, theta, sigma, pi):
+    """计算单词的标签-主题联合概率分布。
+
+    :param n_topics_c: 公共主题数
+    :param phi: ndarray(L, TC + TS)
+    :param theta: ndarray(L, TC + TS)
+    :param sigma: ndarray(L, R)
+    :param pi: ndarray(L, 1)
+    :return: ndarray(L, TC + TS)
+    """
+    distribution = phi * theta
+    distribution[:, :n_topics_c] *= sigma[:, :1]
+    distribution[:, n_topics_c:] *= sigma[:, 1:]
+    distribution *= pi
+    distribution /= distribution.sum()
+    return distribution
+
+
+@jit(nopython=True)
+def _calc_phi(m, w, n_labels, n_vocabs, n_topics_c, n_topics_s, beta,
+              count_word_by_label_topic_c, count_word_by_domain_label_topic_s,
+              n_word_by_label_topic_c, n_word_by_domain_label_topic_s):
+    phi = np.zeros((n_labels, n_topics_c + n_topics_s))
+    phi[:, :n_topics_c] = (count_word_by_label_topic_c[:, :, w] + beta) \
+                          / (n_word_by_label_topic_c + n_vocabs * beta)
+    phi[:, n_topics_c:] = (count_word_by_domain_label_topic_s[m, :, :, w] + beta) \
+                          / (n_word_by_domain_label_topic_s[m] + n_vocabs * beta)
+    return phi
+
+
+@jit(nopython=True)
+def _calc_theta(d, n_labels, n_topics_c, n_topics_s, alpha,
+                n_word_by_doc_label_type, n_word_by_doc_label_topic_c, n_word_by_doc_label_topic_s):
+    theta = np.zeros((n_labels, n_topics_c + n_topics_s))
+    for c in range(n_topics_c):
+        theta[:, c] = (n_word_by_doc_label_topic_c[d, :, c] + alpha) \
+                      / (n_word_by_doc_label_type[d, :, 0] + n_topics_c * alpha)
+    for s in range(n_topics_s):
+        theta[:, n_topics_c + s] = (n_word_by_doc_label_topic_s[d, :, s] + alpha) \
+                                   / (n_word_by_doc_label_type[d, :, 1] + n_topics_s * alpha)
+    return theta
+
+
+@jit(nopython=True)
+def _calc_sigma(d, gamma, count_label_by_doc, n_word_by_doc_label_type):
+    return (n_word_by_doc_label_type[d] + gamma) / (count_label_by_doc[d:d + 1].T + gamma.sum())
+
+
+@jit(nopython=True)
+def _calc_pi(d, m, n_labels, eta, n_word_by_doc, count_label_by_doc):
+    if m == 0:
+        return count_label_by_doc[d] / n_word_by_doc[d]
+    else:
+        return (count_label_by_doc[d] + eta) / (n_word_by_doc[d] + n_labels * eta)
+
+
+@jit(nopython=True)
+def _calc_perplexity(doc_ids, count_word_by_doc, phi_c, phi_s, theta_c, theta_s):
+    sum_logp = sum_len = 0.0
+    for d in doc_ids:
+        sum_len += count_word_by_doc[d].sum()
+        logp = 0.0
+        for w in range(count_word_by_doc.shape[1]):
+            if count_word_by_doc[d, w] > 0:
+                s = np.sum(theta_c[d, :, :] * phi_c[:, :, w]) \
+                    + np.sum(theta_s[d, :, :] * phi_s[1, :, :, w])
+                if s > 0:
+                    logp += count_word_by_doc[d, w] * np.log(s)
+        sum_logp += logp
+    return np.exp(-sum_logp / sum_len)

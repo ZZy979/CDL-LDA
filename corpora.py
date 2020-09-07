@@ -41,7 +41,7 @@ class Corpus(interfaces.CorpusABC):
     * len(corpus)：返回文档数
     """
 
-    def __init__(self, name, base_path=r'D:\IntelliJ IDEA\projects\CDLLDA\dataset'):
+    def __init__(self, name, base_path):
         self.name = name
         with open(os.path.join(base_path, name, 'data.pkl'), 'rb') as f:
             docs = pickle.load(f)
