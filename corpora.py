@@ -1,6 +1,7 @@
 import os
 import pickle
 
+import numpy as np
 from gensim import interfaces
 
 
@@ -17,6 +18,9 @@ class Document:
         self.words = words
         self.label = label
         self.domain = domain
+
+    def __iter__(self):
+        return iter(self.words)
 
     def __len__(self):
         return len(self.words)
@@ -63,6 +67,23 @@ class Corpus(interfaces.CorpusABC):
     def __len__(self):
         return len(self.docs)
 
+    def __getitem__(self, d):
+        return self.docs[d]
+
     @staticmethod
     def save_corpus(fname, corpus, id2word=None, metadata=False):
         pass
+
+
+class PriorCorpus(Corpus):
+    """带有单词标签先验的语料库。
+
+    增加的属性
+    =====
+    * prior: ndarray(V, L)，表示单词的标签先验概率
+    """
+
+    def __init__(self, name, base_path):
+        super().__init__(name, base_path)
+        with open(os.path.join(base_path, name, 'soft_prior.pkl'), 'rb') as f:
+            self.prior = np.array(pickle.load(f))

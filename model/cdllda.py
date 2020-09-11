@@ -132,7 +132,8 @@ class CdlLdaModel(basemodel.BaseTopicModel):
         # 参数更新次数
         self.update_count = 0
 
-        # 根据语料库初始化单词数统计、隐变量和分布参数
+    def init(self):
+        """根据语料库初始化单词数统计、隐变量和分布参数。"""
         # d - 文档编号
         # w - 单词在单词表中的编号
         # i - 单词在文档中的索引
@@ -148,12 +149,12 @@ class CdlLdaModel(basemodel.BaseTopicModel):
             self.topic[d] = [0] * len(doc)
             for i, w in enumerate(doc):
                 self.count_word_by_doc[d, w] += 1
-                l, r, z = self.init_word(doc)
+                l, r, z = self.init_one_word(doc)
                 self.label[d][i], self.topic_type[d][i], self.topic[d][i] = l, r, z
                 self.update_word_count(d, doc.domain, l, r, z, w, 1)
         logger.info('Initialization finished')
 
-    def init_word(self, doc):
+    def init_one_word(self, doc):
         """初始化一个单词的标签、主题类型和主题。
 
         :param doc: 单词所属的文档
@@ -169,6 +170,7 @@ class CdlLdaModel(basemodel.BaseTopicModel):
 
     def train(self):
         """训练模型"""
+        self.init()
         logger.info(
             'Training %s model on %s dataset, %d documents, %d iterations, update every %d iter',
             self.name, self.corpus.name, len(self.corpus), self.iterations, self.update_every,
@@ -302,7 +304,7 @@ class CdlLdaModel(basemodel.BaseTopicModel):
                         / (self.n_word_by_doc_label_type[:, :, TopicType.SPECIFIC][:, :, np.newaxis]
                            + self.n_topics_s * self.alpha)
         self.sigma += (self.n_word_by_doc_label_type + self.gamma) \
-                      / (self.count_label_by_doc[:, np.newaxis] + self.gamma.sum())
+                      / (self.count_label_by_doc[:, :, np.newaxis] + self.gamma.sum())
         for d, doc in enumerate(self.corpus):
             self.pi[d] += self.calc_pi(d, doc.domain)
 

@@ -9,11 +9,10 @@ class CdlLdaUnModel(CdlLdaModel):
     """无监督版本的CDL-LDA模型"""
     name = 'CDL-LDA-un'
 
-    def init_word(self, doc):
-        l = np.random.randint(self.corpus.n_labels)
-        r = TopicType.COMMON if np.random.random() < 0.5 else TopicType.SPECIFIC
-        z = np.random.randint(self.n_topics_c) if r == TopicType.COMMON \
-            else np.random.randint(self.n_topics_s)
+    def init_one_word(self, doc):
+        l, r, z = super().init_one_word(doc)
+        if doc.domain == Domain.SOURCE:
+            l = np.random.randint(self.corpus.n_labels)
         return l, r, z
 
     def calc_pi(self, d, m):
