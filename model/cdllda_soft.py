@@ -2,26 +2,26 @@ import logging
 
 import numpy as np
 
-from corpora import PriorCorpus
 from model.cdllda import CdlLdaModel, TopicType, Domain
 
 logger = logging.getLogger(__name__)
 
 
-class CdlLdaExModel(CdlLdaModel):
+class CdlLdaSoftModel(CdlLdaModel):
     """改进版本的CDL-LDA模型
 
     1. 单词标签可以使用soft prior
     2. 源域和目标域的特有主题数量可以不同
     """
-    name = 'CDL-LDA-ex'
+    name = 'CDL-LDA-soft'
 
-    def __init__(self, corpus: PriorCorpus, iterations=40, update_every=8,
+    def __init__(self, corpus, id2word, iterations=40, update_every=8,
                  n_topics_c=6, n_topics_s_src=6, n_topics_s_tgt=6, alpha=10.0, beta=0.1,
-                 gamma_c=1000.0, gamma_s=1000.0, eta=0.01, seed=45, use_soft=False):
-        """构造一个CDL-LDA-ex模型
+                 gamma_c=1000.0, gamma_s=1000.0, eta=0.01, seed=45, use_soft=False, prior=None):
+        """构造一个CDL-LDA-soft模型
 
-        :param corpus: corpora.PriorCorpus，语料库
+        :param corpus: iterable of corpora.Document，语料库
+        :param id2word: 字典{单词id: 单词}
         :param iterations: 迭代次数
         :param update_every: 每迭代多少次更新参数
         :param n_topics_c: 公共主题数量
@@ -34,13 +34,15 @@ class CdlLdaExModel(CdlLdaModel):
         :param eta: 标签（主题组）分布π的Dirichlet先验
         :param seed: 随机数种子
         :param use_soft: 单词标签是否使用soft prior
+        :param prior: ndarray(V, L)，单词标签先验概率
         """
         super().__init__(
-            corpus, iterations, update_every, n_topics_c, max(n_topics_s_src, n_topics_s_tgt),
-            alpha, beta, gamma_c, gamma_s, eta, seed
+            corpus, id2word, iterations, update_every, n_topics_c,
+            max(n_topics_s_src, n_topics_s_tgt), alpha, beta, gamma_c, gamma_s, eta, seed
         )
         self._n_topics_s = np.array([n_topics_s_src, n_topics_s_tgt])
         self.use_soft = use_soft
+        self.prior = prior
         logger.info(
             '%d specific topics in source domain, %d in target, use soft prior = %s',
             n_topics_s_src, n_topics_s_tgt, use_soft
@@ -67,7 +69,7 @@ class CdlLdaExModel(CdlLdaModel):
 
     def calc_pi(self, d, m):
         if self.use_soft and m == Domain.SOURCE:
-            return _calc_pi_soft(d, np.array(self.corpus[d], dtype=np.int32), self.corpus.prior)
+            return _calc_pi_soft(d, np.array(self.corpus[d], dtype=np.int32), self.prior)
         else:
             return super().calc_pi(d, m)
 

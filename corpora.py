@@ -1,7 +1,3 @@
-import os
-import pickle
-
-import numpy as np
 from gensim import interfaces
 
 
@@ -35,8 +31,6 @@ class Corpus(interfaces.CorpusABC):
     属性
     =====
     * name: 数据集名称
-    * id2word：字典{id: word}，表示单词表
-    * n_vocabs：单词表大小
     * n_labels：标签数
 
     方法
@@ -45,21 +39,13 @@ class Corpus(interfaces.CorpusABC):
     * len(corpus)：返回文档数
     """
 
-    def __init__(self, name, base_path):
+    def __init__(self, name, docs, labels, domains):
         self.name = name
-        with open(os.path.join(base_path, name, 'data.pkl'), 'rb') as f:
-            docs = pickle.load(f)
-            self.word2id = pickle.load(f)
-            self.id2word = pickle.load(f)
-            labels = pickle.load(f)
-            domains = pickle.load(f)
-
-            self.n_vocabs = len(self.id2word)
-            self.n_labels = len(set(labels))
-            self.docs = [
-                Document(docs[i], labels[i], domains[i])
-                for i in range(len(docs)) if len(docs[i]) >= 5
-            ]
+        self.docs = [
+            Document(docs[i], labels[i], domains[i])
+            for i in range(len(docs)) if len(docs[i]) >= 5
+        ]
+        self.n_labels = len(set(labels))
 
     def __iter__(self):
         return iter(self.docs)
@@ -73,17 +59,3 @@ class Corpus(interfaces.CorpusABC):
     @staticmethod
     def save_corpus(fname, corpus, id2word=None, metadata=False):
         pass
-
-
-class PriorCorpus(Corpus):
-    """带有单词标签先验的语料库。
-
-    增加的属性
-    =====
-    * prior: ndarray(V, L)，表示单词的标签先验概率
-    """
-
-    def __init__(self, name, base_path):
-        super().__init__(name, base_path)
-        with open(os.path.join(base_path, name, 'soft_prior.pkl'), 'rb') as f:
-            self.prior = np.array(pickle.load(f))

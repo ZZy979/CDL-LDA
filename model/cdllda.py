@@ -12,7 +12,6 @@ from gensim.models import basemodel
 from numba import jit
 
 import utils
-from corpora import Corpus
 
 
 class Domain(IntEnum):
@@ -34,12 +33,13 @@ class CdlLdaModel(basemodel.BaseTopicModel):
     """标准CDL-LDA模型"""
     name = 'CDL-LDA'
 
-    def __init__(self, corpus: Corpus, iterations=40, update_every=8,
+    def __init__(self, corpus, id2word, iterations=40, update_every=8,
                  n_topics_c=6, n_topics_s=6, alpha=10.0, beta=0.1,
                  gamma_c=1000.0, gamma_s=1000.0, eta=0.01, seed=45):
         """构造一个CDL-LDA模型
 
-        :param corpus: corpora.Corpus，语料库
+        :param corpus: iterable of corpora.Document，语料库
+        :param id2word: 字典{单词id: 单词}
         :param iterations: 迭代次数
         :param update_every: 每迭代多少次更新参数
         :param n_topics_c: 公共主题数量
@@ -56,8 +56,9 @@ class CdlLdaModel(basemodel.BaseTopicModel):
             'alpha = %s, beta = %s, gamma_c = %s, gamma_s = %s, eta = %s, seed = %d',
             self.name, n_topics_c, n_topics_s, alpha, beta, gamma_c, gamma_s, eta, seed
         )
-        # ----------语料库----------
+        # ----------语料库、单词表----------
         self.corpus = corpus
+        self.id2word = id2word
 
         # ----------模型参数----------
         self.iterations = iterations
@@ -82,7 +83,7 @@ class CdlLdaModel(basemodel.BaseTopicModel):
         # TC - 公共主题数
         # TS - 特有主题数
         # -------------------------------------
-        V = self.corpus.n_vocabs
+        V = len(self.id2word)
         D = len(self.corpus)
         L = self.corpus.n_labels
         R = len(TopicType.__members__)
@@ -168,8 +169,8 @@ class CdlLdaModel(basemodel.BaseTopicModel):
             else np.random.randint(self.n_topics_s)
         return l, r, z
 
-    def train(self):
-        """训练模型"""
+    def estimate(self):
+        """参数估计（训练模型）"""
         self.init()
         logger.info(
             'Training %s model on %s dataset, %d documents, %d iterations, update every %d iter',
@@ -182,17 +183,17 @@ class CdlLdaModel(basemodel.BaseTopicModel):
                 for i, w in enumerate(doc):
                     l, r, z = self.label[d][i], self.topic_type[d][i], self.topic[d][i]
                     self.update_word_count(d, m, l, r, z, w, -1)
-                    l, r, z = self.do_estep(d, m, w)
+                    l, r, z = self.sample(d, m, w)
                     self.label[d][i], self.topic_type[d][i], self.topic[d][i] = l, r, z
                     self.update_word_count(d, m, l, r, z, w, 1)
             if (it + 1) % self.update_every == 0 or it == self.iterations - 1:
                 elapsed = time.time() - start_time
                 logger.info('Iteration %d/%d, time: %.2f s', it + 1, self.iterations, elapsed)
-                self.do_mstep()
+                self.update_param()
         logger.info('Training finished')
 
-    def do_estep(self, d, m, w):
-        """E步：采样生成单词w的标签、主题类型和主题。
+    def sample(self, d, m, w):
+        """采样生成单词w的标签、主题类型和主题。
 
         遍历所有的标签l、主题类型r和主题z，计算P(l,r,z,w|d)，以此为概率进行采样。
 
@@ -250,7 +251,7 @@ class CdlLdaModel(basemodel.BaseTopicModel):
         :return: ndarray(L, TC + TS), 0~TC-1列表示公共主题，TC~TC+TS-1列表示特有主题
         """
         return _calc_phi(
-            int(m), w, self.corpus.n_labels, self.corpus.n_vocabs, self.n_topics_c, self.n_topics_s,
+            int(m), w, self.corpus.n_labels, len(self.id2word), self.n_topics_c, self.n_topics_s,
             self.beta, self.count_word_by_label_topic_c, self.count_word_by_domain_label_topic_s,
             self.n_word_by_label_topic_c, self.n_word_by_domain_label_topic_s
         )
@@ -282,8 +283,8 @@ class CdlLdaModel(basemodel.BaseTopicModel):
             d, int(m), self.corpus.n_labels, self.eta, self.n_word_by_doc, self.count_label_by_doc
         )
 
-    def do_mstep(self):
-        """M步：更新分布参数。"""
+    def update_param(self):
+        """更新分布参数。"""
         self.phi_c *= self.update_count
         self.phi_s *= self.update_count
         self.theta_c *= self.update_count
@@ -293,10 +294,10 @@ class CdlLdaModel(basemodel.BaseTopicModel):
 
         self.phi_c += (self.count_word_by_label_topic_c + self.beta) \
                       / (self.n_word_by_label_topic_c[:, :, np.newaxis]
-                         + self.corpus.n_vocabs * self.beta)
+                         + len(self.id2word) * self.beta)
         self.phi_s += (self.count_word_by_domain_label_topic_s + self.beta) \
                       / (self.n_word_by_domain_label_topic_s[:, :, :, np.newaxis]
-                         + self.corpus.n_vocabs * self.beta)
+                         + len(self.id2word) * self.beta)
         self.theta_c += (self.n_word_by_doc_label_topic_c + self.alpha) \
                         / (self.n_word_by_doc_label_type[:, :, TopicType.COMMON][:, :, np.newaxis]
                            + self.n_topics_c * self.alpha)
@@ -360,7 +361,7 @@ class CdlLdaModel(basemodel.BaseTopicModel):
         :return: list of (str, float)
         """
         topic = self.get_topics(m, l, r)[topicid]
-        return [(self.corpus.id2word[w], topic[w]) for w in matutils.argsort(topic, topn, True)]
+        return [(self.id2word[w], topic[w]) for w in matutils.argsort(topic, topn, True)]
 
     def show_topics(self, num_topics=10, num_words=10, log=False,
                     m=Domain.SOURCE, l=0, r=TopicType.COMMON):
