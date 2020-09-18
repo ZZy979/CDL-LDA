@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 class CdlLdaSoftModel(CdlLdaModel):
     """改进版本的CDL-LDA模型
 
-    1. 单词标签可以使用soft prior
+    1. 单词主题组可以使用soft prior
     2. 源域和目标域的特有主题数量可以不同
     """
     name = 'CDL-LDA-soft'
@@ -31,10 +31,10 @@ class CdlLdaSoftModel(CdlLdaModel):
         :param beta: 主题-单词分布φ的Dirichlet先验
         :param gamma_c: 公共主题类型分布σ的Beta先验
         :param gamma_s: 特有主题类型分布σ的Beta先验
-        :param eta: 标签（主题组）分布π的Dirichlet先验
+        :param eta: 主题组分布π的Dirichlet先验
         :param seed: 随机数种子
-        :param use_soft: 单词标签是否使用soft prior
-        :param prior: ndarray(V, L)，单词标签先验概率
+        :param use_soft: 单词主题组是否使用soft prior
+        :param prior: ndarray(V, G)，单词主题组先验概率
         """
         super().__init__(
             corpus, id2word, iterations, update_every, n_topics_c,
@@ -49,10 +49,10 @@ class CdlLdaSoftModel(CdlLdaModel):
         )
 
     def init_one_word(self, doc):
-        l, r, z = super().init_one_word(doc)
+        g, r, z = super().init_one_word(doc)
         if r == TopicType.SPECIFIC:
             z = np.random.randint(self._n_topics_s[doc.domain])
-        return l, r, z
+        return g, r, z
 
     def calc_phi(self, m, w):
         # TS = max{TS(src), TS(tgt)}，若TS(src) < TS(tgt)则TS(src):TS对应的列要清零，对TS(tgt)同理

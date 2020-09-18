@@ -8,7 +8,7 @@ class Document:
         """构造一篇文档
 
         :param words: list of int，单词列表，每个元素表示单词索引
-        :param label: int，文档标签（主题组）
+        :param label: int，文档标签
         :param domain: int，文档所属的域，0 - 源域，1 - 目标域
         """
         self.words = words

@@ -37,7 +37,7 @@ def main():
     parser.add_argument('-b', '--beta', type=float, default=0.1, help='主题-单词分布φ的Dirichlet先验')
     parser.add_argument('--gamma-c', type=float, default=1000, help='公共主题类型分布σ的Beta先验')
     parser.add_argument('--gamma-s', type=float, default=1000, help='特有主题类型分布σ的Beta先验')
-    parser.add_argument('-e', '--eta', type=float, default=0.01, help='标签（主题组）分布π的Dirichlet先验')
+    parser.add_argument('-e', '--eta', type=float, default=0.01, help='主题组分布π的Dirichlet先验')
     parser.add_argument('--use-soft', action='store_true', help='是否使用soft prior（仅用于CDL-LDA-soft）')
 
     args = parser.parse_args()
