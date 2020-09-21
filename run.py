@@ -5,8 +5,9 @@ import pickle
 
 import numpy as np
 
-from corpora import Corpus
+from corpora import CrossDomainCorpus
 from model.cdllda import CdlLdaModel
+from model.cdllda_lr import CdlLdaLRModel
 from model.cdllda_soft import CdlLdaSoftModel
 from model.cdllda_un import CdlLdaUnModel
 
@@ -21,7 +22,7 @@ datasets = [
 def main():
     parser = argparse.ArgumentParser(description='运行CDL-LDA模型')
     parser.add_argument(
-        '-m', '--model', choices=['cdllda', 'un', 'soft'], default='cdllda', help='要使用的模型'
+        '-m', '--model', choices=['cdllda', 'un', 'soft', 'lr'], default='cdllda', help='要使用的模型'
     )
     parser.add_argument('-p', '--path', help='数据集所在目录', dest='base_path')
     parser.add_argument(
@@ -30,8 +31,10 @@ def main():
     )
     parser.add_argument('-i', '--iterations', type=int, default=40, help='迭代次数')
     parser.add_argument('-u', '--update-every', type=int, default=8, help='每迭代多少次更新参数')
+    parser.add_argument('--gibbs-iter', type=int, default=4, help='吉布斯采样迭代次数（仅用于CDL-LDA-LR）')
+    parser.add_argument('-g', '--n-groups', type=int, default=2, help='主题组数量（仅用于CDL-LDA-LR）')
     parser.add_argument('-c', '--n-topics-c', type=int, default=6, help='公共主题数量')
-    parser.add_argument('-s', '--n-topics-s', type=int, default=6, help='（源域）特有主题数量')
+    parser.add_argument('-s', '--n-topics-s', type=int, default=6, help='特有主题数量')
     parser.add_argument('--n-topics-s-tgt', type=int, default=6, help='目标域特有主题数量（仅用于CDL-LDA-soft）')
     parser.add_argument('-a', '--alpha', type=float, default=10.0, help='文档-主题分布θ的Dirichlet先验')
     parser.add_argument('-b', '--beta', type=float, default=0.1, help='主题-单词分布φ的Dirichlet先验')
@@ -46,7 +49,8 @@ def main():
         datasets = args.datasets
     model_cls = CdlLdaModel if args.model == 'cdllda' \
         else CdlLdaUnModel if args.model == 'un' \
-        else CdlLdaSoftModel
+        else CdlLdaSoftModel if args.model == 'soft' \
+        else CdlLdaLRModel
     model_args = {
         'iterations': args.iterations,
         'update_every': args.update_every,
@@ -63,6 +67,9 @@ def main():
         model_args['use_soft'] = args.use_soft
     else:
         model_args['n_topics_s'] = args.n_topics_s
+    if args.model == 'lr':
+        model_args['gibbs_iter'] = args.gibbs_iter
+        model_args['n_groups'] = args.n_groups
 
     for name in datasets:
         with open(os.path.join(args.base_path, name, 'data.pkl'), 'rb') as f:
@@ -71,7 +78,7 @@ def main():
             id2word = pickle.load(f)
             labels = pickle.load(f)
             domains = pickle.load(f)
-        corpus = Corpus(name, docs, labels, domains)
+        corpus = CrossDomainCorpus(name, docs, labels, domains)
         model_args['corpus'] = corpus
         model_args['id2word'] = id2word
         if args.model == 'soft' and args.use_soft:

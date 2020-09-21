@@ -33,7 +33,7 @@ class CdlLdaUnModel(CdlLdaModel):
                 X[d][index] += 1
         X /= X.sum(axis=1)[:, np.newaxis]
         y = np.array([doc.label for doc in self.corpus])
-        train_size = sum(1 for doc in self.corpus if doc.domain == Domain.SOURCE)
+        train_size = self.corpus.n_source
 
         # 无监督预测：使用逻辑回归
         clf = LogisticRegression(penalty='l2', tol=1e-2, C=1.0)

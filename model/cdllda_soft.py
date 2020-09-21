@@ -69,11 +69,11 @@ class CdlLdaSoftModel(CdlLdaModel):
 
     def calc_pi(self, d, m):
         if self.use_soft and m == Domain.SOURCE:
-            return _calc_pi_soft(d, np.array(self.corpus[d], dtype=np.int32), self.prior)
+            return _calc_pi_soft(np.array(self.corpus[d], dtype=np.int32), self.prior)
         else:
             return super().calc_pi(d, m)
 
 
-def _calc_pi_soft(d, doc, prior):
+def _calc_pi_soft(doc, prior):
     pi = np.sum(prior.take(doc, axis=0), axis=0)
     return pi / pi.sum()

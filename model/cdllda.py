@@ -180,21 +180,25 @@ class CdlLdaModel(basemodel.BaseTopicModel):
         )
         start_time = time.time()
         for it in range(self.iterations):
-            for d, doc in enumerate(self.corpus):
-                m = doc.domain
-                for i, w in enumerate(doc):
-                    g, r, z = self.topic_group[d][i], self.topic_type[d][i], self.topic[d][i]
-                    self.update_word_count(d, m, g, r, z, w, -1)
-                    g, r, z = self.sample(d, m, w)
-                    self.topic_group[d][i], self.topic_type[d][i], self.topic[d][i] = g, r, z
-                    self.update_word_count(d, m, g, r, z, w, 1)
+            self.sample()
             if (it + 1) % self.update_every == 0 or it == self.iterations - 1:
                 elapsed = time.time() - start_time
                 logger.info('Iteration %d/%d, time: %.2f s', it + 1, self.iterations, elapsed)
                 self.update_param()
         logger.info('Training finished')
 
-    def sample(self, d, m, w):
+    def sample(self):
+        """采样生成所有单词的主题组、主题类型和主题并更新单词计数。"""
+        for d, doc in enumerate(self.corpus):
+            m = doc.domain
+            for i, w in enumerate(doc):
+                g, r, z = self.topic_group[d][i], self.topic_type[d][i], self.topic[d][i]
+                self.update_word_count(d, m, g, r, z, w, -1)
+                g, r, z = self.sample_one_word(d, m, w)
+                self.topic_group[d][i], self.topic_type[d][i], self.topic[d][i] = g, r, z
+                self.update_word_count(d, m, g, r, z, w, 1)
+
+    def sample_one_word(self, d, m, w):
         """采样生成单词w的主题组、主题类型和主题。
 
         遍历所有的主题组g、主题类型r和主题z，计算P(g,r,z,w|d)，以此为概率进行采样。
