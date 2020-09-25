@@ -7,7 +7,6 @@ from sklearn.linear_model import LogisticRegression
 
 from model.cdllda import CdlLdaModel, Domain
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -79,5 +78,21 @@ class CdlLdaLRModel(CdlLdaModel):
             super().sample()
         self.train_lr()
 
+    def calc_joint_distribution(self, d, m, w):
+        distribution = super().calc_joint_distribution(d, m, w)
+        doc = self.corpus[d]
+        return _calc_weighted_calc_distribution(
+            distribution, self.psi, self.topic_group_freq[d], self.n_word_by_doc[d]
+        ) if doc.domain == Domain.SOURCE else distribution
+
     def predict_label(self):
         return self.lr_model.predict(self.topic_group_freq[self.corpus.n_source:])
+
+
+@jit(nopython=True)
+def _calc_weighted_calc_distribution(distribution, psi, gd, nd):
+    # weight只与主题组编号g有关，联合分布每一行的权重相同，因此乘以一个列向量，weight: ndarray(G, 1)
+    weight = 1 + np.exp(np.dot(-psi[0], gd)) * np.exp(psi.T / nd)
+    distribution *= weight
+    distribution /= distribution.sum()
+    return distribution
