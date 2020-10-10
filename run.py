@@ -37,7 +37,7 @@ def main():
     parser.add_argument('-s', '--n-topics-s', type=int, default=6, help='特有主题数量')
     parser.add_argument('--n-topics-s-tgt', type=int, default=6, help='目标域特有主题数量（仅用于CDL-LDA-soft）')
     parser.add_argument('-a', '--alpha', type=float, default=10.0, help='文档-主题分布θ的Dirichlet先验')
-    parser.add_argument('-b', '--beta', type=float, default=0.1, help='主题-单词分布φ的Dirichlet先验')
+    parser.add_argument('-b', '--beta', type=float, default=0.01, help='主题-单词分布φ的Dirichlet先验')
     parser.add_argument('--gamma-c', type=float, default=1000, help='公共主题类型分布σ的Beta先验')
     parser.add_argument('--gamma-s', type=float, default=1000, help='特有主题类型分布σ的Beta先验')
     parser.add_argument('-e', '--eta', type=float, default=0.01, help='主题组分布π的Dirichlet先验')

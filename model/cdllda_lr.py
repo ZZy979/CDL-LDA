@@ -15,7 +15,7 @@ class CdlLdaLRModel(CdlLdaModel):
     name = 'CDL-LDA-LR'
 
     def __init__(self, corpus, id2word, iterations=40, update_every=8, gibbs_iter=4,
-                 n_groups=2, n_topics_c=6, n_topics_s=6, alpha=10.0, beta=0.1,
+                 n_groups=2, n_topics_c=6, n_topics_s=6, alpha=10.0, beta=0.01,
                  gamma_c=1000.0, gamma_s=1000.0, eta=0.01, seed=45):
         """构造一个CDL-LDA-LR模型
 

@@ -34,7 +34,7 @@ class CdlLdaModel(basemodel.BaseTopicModel):
     name = 'CDL-LDA'
 
     def __init__(self, corpus, id2word, iterations=40, update_every=8,
-                 n_topics_c=6, n_topics_s=6, alpha=10.0, beta=0.1,
+                 n_topics_c=6, n_topics_s=6, alpha=10.0, beta=0.01,
                  gamma_c=1000.0, gamma_s=1000.0, eta=0.01, seed=45):
         """构造一个CDL-LDA模型
 
@@ -111,11 +111,11 @@ class CdlLdaModel(basemodel.BaseTopicModel):
 
         # ----------隐变量：每个单词的主题组、主题类型、主题----------
         # 每个文档中每个单词的主题组，D*Nd
-        self.topic_group = [[] for d in range(D)]
+        self.topic_group = [[] for _ in range(D)]
         # 每个文档中每个单词的主题类型，D*Nd
-        self.topic_type = [[] for d in range(D)]
+        self.topic_type = [[] for _ in range(D)]
         # 每个文档中每个单词的主题，D*Nd
-        self.topic = [[] for d in range(D)]
+        self.topic = [[] for _ in range(D)]
 
         # ----------分布参数----------
         # 公共主题-单词分布，G*TC*V
