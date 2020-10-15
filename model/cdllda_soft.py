@@ -17,7 +17,7 @@ class CdlLdaSoftModel(CdlLdaModel):
 
     def __init__(self, corpus, id2word, iterations=40, update_every=8,
                  n_topics_c=6, n_topics_s_src=6, n_topics_s_tgt=6, alpha=10.0, beta=0.01,
-                 gamma_c=1000.0, gamma_s=1000.0, eta=0.01, seed=45, use_soft=False, prior=None):
+                 gamma_c=1000.0, gamma_s=1000.0, eta=0.1, seed=45, use_soft=False, prior=None):
         """构造一个CDL-LDA-soft模型
 
         :param corpus: iterable of corpora.Document，语料库

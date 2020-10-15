@@ -10,7 +10,7 @@
 * 预测文档标签使用逻辑回归而不是文档中单词的主题组
 
 ## [CDL-LDA-soft](model/cdllda_soft.py)
-（尝试）改进版本的CDL-LDA模型
+使用soft prior的CDL-LDA模型
 * 单词主题组可以使用soft prior
 * 源域和目标域的特有主题数量可以不同
 
