@@ -12,7 +12,6 @@
 ## [CDL-LDA-soft](model/cdllda_soft.py)
 使用soft prior的CDL-LDA模型
 * 单词主题组可以使用soft prior
-* 源域和目标域的特有主题数量可以不同
 
 ## [CDL-LDA-LR](model/cdllda_lr.py)
 嵌入逻辑回归的CDL-LDA模型
