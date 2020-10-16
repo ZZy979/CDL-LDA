@@ -2,7 +2,7 @@ import numpy as np
 from numba import jit
 from sklearn.linear_model import LogisticRegression
 
-from model.cdllda import CdlLdaModel, Domain, TopicType
+from models.cdllda import CdlLdaModel, Domain, TopicType
 
 
 class CdlLdaUnModel(CdlLdaModel):

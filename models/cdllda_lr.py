@@ -5,7 +5,7 @@ import numpy as np
 from numba import jit
 from sklearn.linear_model import LogisticRegression
 
-from model.cdllda import CdlLdaModel, Domain
+from models.cdllda import CdlLdaModel, Domain
 
 logger = logging.getLogger(__name__)
 
@@ -14,9 +14,7 @@ class CdlLdaLRModel(CdlLdaModel):
     """嵌入逻辑回归的CDL-LDA模型"""
     name = 'CDL-LDA-LR'
 
-    def __init__(self, corpus, id2word, iterations=40, update_every=8, gibbs_iter=4,
-                 n_groups=2, n_topics_c=6, n_topics_s=6, alpha=10.0, beta=0.01,
-                 gamma_c=1000.0, gamma_s=1000.0, eta=0.1, seed=45):
+    def __init__(self, gibbs_iter=4, n_groups=2, *args, **kwargs):
         """构造一个CDL-LDA-LR模型
 
         :param corpus: iterable of corpora.Document，语料库
@@ -35,10 +33,7 @@ class CdlLdaLRModel(CdlLdaModel):
         :param seed: 随机数种子
         """
         self._n_groups = n_groups
-        super().__init__(
-            corpus, id2word, iterations, update_every, n_topics_c, n_topics_s,
-            alpha, beta, gamma_c, gamma_s, eta, seed
-        )
+        super().__init__(*args, **kwargs)
         self.gibbs_iter = gibbs_iter
         # 文档中单词的主题组频率，D*G
         self.topic_group_freq = np.zeros((len(self.corpus), n_groups))
