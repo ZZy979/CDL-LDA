@@ -18,3 +18,6 @@
 * 单词的主题组不再对应文档标签，主题组的数量和标签数量可以不同
 * 生成过程嵌入逻辑回归模型，和模型本身同时训练
 * 预测文档标签使用训练得到的逻辑回归模型
+
+## [CDL-LDA-soft-LR](models/cdllda_soft_lr.py)
+CDL-LDA-soft + CDL-LDA-LR
